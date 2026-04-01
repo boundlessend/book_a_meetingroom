@@ -5,11 +5,21 @@ from itertools import count
 from threading import RLock
 
 from app.errors import AppError
-from app.models import Booking, BookingStatus
+from app.models import Booking, BookingStatus, Room
 
 
 class BookingService:
+    """сервис бронирования переговорных"""
+
     def __init__(self) -> None:
+        self._rooms: dict[int, Room] = {
+            room.id: room
+            for room in (
+                Room(id=1, name="Biba"),
+                Room(id=2, name="Boba"),
+                Room(id=3, name="Luntik"),
+            )
+        }
         self._bookings: dict[int, Booking] = {}
         self._id_sequence = count(1)
         self._lock = RLock()
@@ -17,11 +27,13 @@ class BookingService:
     def create_booking(
         self,
         *,
-        room_id: str,
+        room_id: int,
         title: str,
         start_at: datetime,
         end_at: datetime,
     ) -> Booking:
+        """создает бронирование, если комната существует и слот свободен"""
+        self._get_room_or_raise(room_id)
         with self._lock:
             conflicting_booking = self._find_conflicting_booking(
                 room_id=room_id,
@@ -53,6 +65,7 @@ class BookingService:
             return booking
 
     def get_booking(self, booking_id: int) -> Booking:
+        """возвращает бронирование по id"""
         with self._lock:
             booking = self._bookings.get(booking_id)
             if booking is None:
@@ -64,24 +77,42 @@ class BookingService:
                 )
             return booking
 
-    def list_bookings(self, *, room_id: str, day: date) -> list[Booking]:
-        day_start, day_end = self._day_bounds(day)
+    def list_bookings(
+        self, *, room_id: int | None = None, day: date | None = None
+    ) -> list[Booking]:
+        """возвращает список бронирований с необязательной фильтрацией"""
+        if room_id is not None:
+            self._get_room_or_raise(room_id)
+
+        day_start: datetime | None = None
+        day_end: datetime | None = None
+        if day is not None:
+            day_start, day_end = self._day_bounds(day)
+
         with self._lock:
-            bookings = [
-                booking
-                for booking in self._bookings.values()
-                if booking.room_id == room_id
-                and self._intervals_overlap(
-                    booking.start_at,
-                    booking.end_at,
-                    day_start,
-                    day_end,
-                )
-            ]
-            bookings.sort(key=lambda item: item.start_at)
+            bookings = list(self._bookings.values())
+            if room_id is not None:
+                bookings = [
+                    booking
+                    for booking in bookings
+                    if booking.room_id == room_id
+                ]
+            if day_start is not None and day_end is not None:
+                bookings = [
+                    booking
+                    for booking in bookings
+                    if self._intervals_overlap(
+                        booking.start_at,
+                        booking.end_at,
+                        day_start,
+                        day_end,
+                    )
+                ]
+            bookings.sort(key=lambda item: (item.start_at, item.id))
             return bookings
 
     def cancel_booking(self, booking_id: int) -> Booking:
+        """отменяет существующее бронирование"""
         with self._lock:
             booking = self._bookings.get(booking_id)
             if booking is None:
@@ -102,8 +133,10 @@ class BookingService:
             return booking
 
     def get_available_slots(
-        self, *, room_id: str, day: date
+        self, *, room_id: int, day: date
     ) -> list[tuple[datetime, datetime]]:
+        """возвращает свободные интервалы комнаты внутри дня"""
+        self._get_room_or_raise(room_id)
         day_start, day_end = self._day_bounds(day)
         with self._lock:
             busy_intervals = [
@@ -131,10 +164,21 @@ class BookingService:
             slots.append((cursor, day_end))
         return slots
 
+    def _get_room_or_raise(self, room_id: int) -> Room:
+        room = self._rooms.get(room_id)
+        if room is None:
+            raise AppError(
+                code="room_not_found",
+                message=f"room with id={room_id} was not found",
+                status_code=404,
+                details={"room_id": room_id},
+            )
+        return room
+
     def _find_conflicting_booking(
         self,
         *,
-        room_id: str,
+        room_id: int,
         start_at: datetime,
         end_at: datetime,
     ) -> Booking | None:
@@ -160,6 +204,6 @@ class BookingService:
 
     @staticmethod
     def _day_bounds(day: date) -> tuple[datetime, datetime]:
-        day_start = datetime.combine(day, time.min)
-        day_end = day_start + timedelta(days=1)
-        return day_start, day_end
+        return datetime.combine(day, time.min), datetime.combine(
+            day, time.min
+        ) + timedelta(days=1)

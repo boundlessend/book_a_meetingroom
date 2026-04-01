@@ -6,19 +6,31 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.models import BookingStatus
 
 
+class ErrorPayload(BaseModel):
+    """структура ошибки api"""
+
+    code: str
+    message: str
+    details: Any = None
+
+
 class ErrorResponse(BaseModel):
-    error: dict[str, Any]
+    """обертка для ошибок api"""
+
+    error: ErrorPayload
 
 
 class BookingCreateRequest(BaseModel):
-    room_id: str = Field(min_length=1, max_length=100)
+    """тело запроса на создание бронирования"""
+
+    room_id: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=200)
     start_at: datetime
     end_at: datetime
 
-    @field_validator("room_id", "title")
+    @field_validator("title")
     @classmethod
-    def strip_text_fields(cls, value: str) -> str:
+    def strip_title(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("value must not be empty")
@@ -41,8 +53,10 @@ class BookingCreateRequest(BaseModel):
 
 
 class BookingResponse(BaseModel):
+    """ответ с данными бронирования"""
+
     id: int
-    room_id: str
+    room_id: int
     title: str
     start_at: datetime
     end_at: datetime
@@ -50,11 +64,15 @@ class BookingResponse(BaseModel):
 
 
 class AvailableSlotResponse(BaseModel):
+    """один свободный интервал"""
+
     start_at: datetime
     end_at: datetime
 
 
 class AvailableSlotsResponse(BaseModel):
-    room_id: str
+    """список свободных интервалов комнаты на дату"""
+
+    room_id: int
     date: date
     slots: list[AvailableSlotResponse]

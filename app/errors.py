@@ -4,6 +4,8 @@ from typing import Any
 
 
 class AppError(Exception):
+    """ошибка приложения с данными для ответа api"""
+
     def __init__(
         self,
         *,
